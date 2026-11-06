@@ -2,11 +2,11 @@
 
 namespace SMDebug
 {
-	inline void Print(const FString& Message, const FColor& Color)
+	inline void Print(const FString& Message)
 	{
 		if (GEngine)
 		{
-			GEngine->AddOnScreenDebugMessage(-1, 8.f, Color, Message);
+			GEngine->AddOnScreenDebugMessage(-1, 8.f, FColor::MakeRandomColor(), Message);
 		}
 		UE_LOG(LogTemp, Warning, TEXT("%s"), *Message)
 	}
