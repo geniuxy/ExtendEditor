@@ -6,6 +6,7 @@
 #include "SMDebugHelper.h"
 #include "EditorUtilityLibrary.h"
 #include "EditorAssetLibrary.h"
+#include "ObjectTools.h"
 
 void UQuickAssetAction::DuplicateAssets(int32 NumOfDuplicates)
 {
@@ -105,4 +106,32 @@ void UQuickAssetAction::AddPrefixes()
 	{
 		SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功添加%d个文件的前缀"), Counter));
 	}
+}
+
+void UQuickAssetAction::RemoveUnusedAssets()
+{
+	TArray<FAssetData> SelectedAssetDataArray = UEditorUtilityLibrary::GetSelectedAssetData();
+	TArray<FAssetData> UnusedAssetDataArray;
+
+	for (FAssetData SelectedAssetData : SelectedAssetDataArray)
+	{
+		TArray<FString> AssetReferrers =
+			UEditorAssetLibrary::FindPackageReferencersForAsset(SelectedAssetData.GetObjectPathString());
+
+		if (AssetReferrers.IsEmpty())
+		{
+			UnusedAssetDataArray.Add(SelectedAssetData);
+		}
+	}
+
+	if (UnusedAssetDataArray.IsEmpty())
+	{
+		SMDebug::ShowMsgDialog(EAppMsgType::Ok, TEXT("选中的Assets中没有没被使用过的，无法通过该方法删除"));
+		return;
+	}
+
+	const int32 NumOfAssetsDeleted = ObjectTools::DeleteAssets(UnusedAssetDataArray);
+	if (NumOfAssetsDeleted == 0) return;
+
+	SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功删除了%d个没使用过的文件"), NumOfAssetsDeleted));
 }
