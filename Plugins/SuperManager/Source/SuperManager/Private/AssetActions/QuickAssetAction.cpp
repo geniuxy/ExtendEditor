@@ -66,3 +66,43 @@ void UQuickAssetAction::DuplicateAssets(int32 NumOfDuplicates)
 		SMDebug::ShowMsgDialog(EAppMsgType::Ok, TEXT("没有资产被复制"));
 	}
 }
+
+void UQuickAssetAction::AddPrefixes()
+{
+	TArray<UObject*> SelectedObjects = UEditorUtilityLibrary::GetSelectedAssets();
+	uint32 Counter = 0;
+
+	for (UObject* SelectedObject : SelectedObjects)
+	{
+		if (!SelectedObject) continue;
+
+		FString* PrefixFound = PrefixMap.Find(SelectedObject->GetClass());
+		if (!PrefixFound || PrefixFound->IsEmpty())
+		{
+			SMDebug::Print(FString::Printf(TEXT("找不到前缀，类别class为%s"), *SelectedObject->GetClass()->GetName()));
+			continue;
+		}
+
+		FString OldName = SelectedObject->GetName();
+		if (OldName.StartsWith(*PrefixFound))
+		{
+			SMDebug::Print(FString::Printf(TEXT("%s已经有前缀了"), *OldName));
+			continue;
+		}
+
+		if (SelectedObject->IsA<UMaterialInstanceConstant>())
+		{
+			OldName.RemoveFromStart("M_");
+			OldName.RemoveFromEnd("_Inst");
+		}
+
+		const FString NewNameWithPrefix = *PrefixFound + OldName;
+		UEditorUtilityLibrary::RenameAsset(SelectedObject, NewNameWithPrefix);
+		++Counter;
+	}
+
+	if (Counter)
+	{
+		SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功添加%d个文件的前缀"), Counter));
+	}
+}

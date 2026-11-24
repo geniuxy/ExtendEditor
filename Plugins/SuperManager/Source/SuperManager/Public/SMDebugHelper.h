@@ -14,6 +14,7 @@ namespace SMDebug
 		UE_LOG(LogTemp, Warning, TEXT("%s"), *Message)
 	}
 
+	/** 自定义弹窗 */
 	inline EAppReturnType::Type ShowMsgDialog(
 		EAppMsgType::Type MsgType,
 		const FString& Message,
@@ -26,6 +27,7 @@ namespace SMDebug
 #endif
 	}
 
+	/** 自定义右下角通知 */
 	inline void ShowNotifyInfo(const FString& Message)
 	{
 #if WITH_EDITOR
