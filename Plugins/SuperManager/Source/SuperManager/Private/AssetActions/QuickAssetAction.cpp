@@ -7,6 +7,9 @@
 #include "EditorUtilityLibrary.h"
 #include "EditorAssetLibrary.h"
 #include "ObjectTools.h"
+#include "AssetToolsModule.h"
+#include "AssetViewUtils.h"
+#include "AssetRegistry/AssetRegistryModule.h"
 
 void UQuickAssetAction::DuplicateAssets(int32 NumOfDuplicates)
 {
@@ -113,6 +116,8 @@ void UQuickAssetAction::RemoveUnusedAssets()
 	TArray<FAssetData> SelectedAssetDataArray = UEditorUtilityLibrary::GetSelectedAssetData();
 	TArray<FAssetData> UnusedAssetDataArray;
 
+	FixUpRedirectors();
+
 	for (FAssetData SelectedAssetData : SelectedAssetDataArray)
 	{
 		TArray<FString> AssetReferrers =
@@ -134,4 +139,45 @@ void UQuickAssetAction::RemoveUnusedAssets()
 	if (NumOfAssetsDeleted == 0) return;
 
 	SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功删除了%d个没使用过的文件"), NumOfAssetsDeleted));
+}
+
+void UQuickAssetAction::FixUpRedirectors()
+{
+	IAssetRegistry& AssetRegistry =
+		FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+
+	FARFilter Filter;
+	Filter.bRecursivePaths = true;
+	Filter.PackagePaths.Emplace("/Game");
+	Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
+
+	TArray<FAssetData> AssetList;
+	AssetRegistry.GetAssets(Filter, AssetList);
+
+	if (AssetList.IsEmpty()) return;
+
+	TArray<FString> ObjectPaths;
+	for (const FAssetData& AssetData : AssetList)
+	{
+		ObjectPaths.Add(AssetData.GetObjectPathString());
+	}
+
+	TArray<UObject*> Objects;
+
+	AssetViewUtils::FLoadAssetsSettings Settings;
+	Settings.bFollowRedirectors = false;
+	Settings.bAllowCancel = true;
+
+	AssetViewUtils::ELoadAssetsResult Result = AssetViewUtils::LoadAssetsIfNeeded(ObjectPaths, Objects, Settings);
+	if (Result != AssetViewUtils::ELoadAssetsResult::Cancelled)
+	{
+		TArray<UObjectRedirector*> Redirectors;
+		for (UObject* Object : Objects)
+		{
+			Redirectors.Add(CastChecked<UObjectRedirector>(Object));
+		}
+
+		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+		AssetToolsModule.Get().FixupReferencers(Redirectors);
+	}
 }
