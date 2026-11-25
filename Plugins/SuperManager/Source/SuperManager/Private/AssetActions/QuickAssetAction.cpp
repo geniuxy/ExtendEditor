@@ -3,6 +3,8 @@
 
 #include "AssetActions/QuickAssetAction.h"
 
+#include "Engine/Engine.h"
+#include "Misc/MessageDialog.h"
 #include "SMDebugHelper.h"
 #include "EditorUtilityLibrary.h"
 #include "EditorAssetLibrary.h"
@@ -115,69 +117,168 @@ void UQuickAssetAction::RemoveUnusedAssets()
 {
 	TArray<FAssetData> SelectedAssetDataArray = UEditorUtilityLibrary::GetSelectedAssetData();
 	TArray<FAssetData> UnusedAssetDataArray;
+	TArray<FString> SkippedReferencedAssets;
 
-	FixUpRedirectors();
-
-	for (FAssetData SelectedAssetData : SelectedAssetDataArray)
+	if (SelectedAssetDataArray.IsEmpty())
 	{
-		TArray<FString> AssetReferrers =
-			UEditorAssetLibrary::FindPackageReferencersForAsset(SelectedAssetData.GetObjectPathString());
+		SMDebug::ShowMsgDialog(EAppMsgType::Ok, TEXT("请先选择要检查的资产"));
+		return;
+	}
 
-		if (AssetReferrers.IsEmpty())
+	if (!FixUpRedirectors())
+	{
+		SMDebug::ShowMsgDialog(
+			EAppMsgType::Ok,
+			TEXT("重定向器没有全部修复成功，已停止删除。请先处理 Redirector Update Report 中的错误。"));
+		return;
+	}
+
+	FAssetRegistryModule& AssetRegistryModule =
+		FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// Refresh on-disk dependencies before deciding whether anything is unused.
+	TArray<FString> ScanPaths{TEXT("/Game")};
+	AssetRegistry.ScanPathsSynchronous(ScanPaths, true);
+
+	for (const FAssetData& OldAssetData : SelectedAssetDataArray)
+	{
+		const FAssetData SelectedAssetData =
+			AssetRegistry.GetAssetByObjectPath(OldAssetData.GetSoftObjectPath());
+		if (!SelectedAssetData.IsValid())
 		{
-			UnusedAssetDataArray.Add(SelectedAssetData);
+			continue;
 		}
+
+		// Include both soft and hard on-disk package references.
+		TArray<FName> AssetReferrers;
+		AssetRegistry.GetReferencers(SelectedAssetData.PackageName, AssetReferrers);
+		AssetReferrers.Remove(SelectedAssetData.PackageName);
+
+		if (!AssetReferrers.IsEmpty())
+		{
+			SkippedReferencedAssets.Add(SelectedAssetData.PackageName.ToString());
+			continue;
+		}
+
+		// The registry can miss in-memory references. Use the editor delete flow's
+		// reference analysis as a second check and fail closed on load errors.
+		UObject* LoadedAsset = SelectedAssetData.GetAsset();
+		if (!LoadedAsset)
+		{
+			SkippedReferencedAssets.Add(SelectedAssetData.PackageName.ToString());
+			continue;
+		}
+
+		bool bReferencedInMemory = false;
+		bool bReferencedByUndo = false;
+		ObjectTools::GatherObjectReferencersForDeletion(
+			LoadedAsset,
+			bReferencedInMemory,
+			bReferencedByUndo);
+
+		if (bReferencedInMemory)
+		{
+			SkippedReferencedAssets.Add(SelectedAssetData.PackageName.ToString());
+			continue;
+		}
+
+		UnusedAssetDataArray.Add(SelectedAssetData);
 	}
 
 	if (UnusedAssetDataArray.IsEmpty())
 	{
-		SMDebug::ShowMsgDialog(EAppMsgType::Ok, TEXT("选中的Assets中没有没被使用过的，无法通过该方法删除"));
+		SMDebug::ShowMsgDialog(
+			EAppMsgType::Ok,
+			FString::Printf(
+				TEXT("选中的Assets中没有完全无引用的资产，无法删除。已跳过%d个有引用或无法确认的资产。"),
+				SkippedReferencedAssets.Num()));
 		return;
 	}
 
+	// Never use the confirmation/force-delete path here. This performs a safe
+	// delete and will not remove anything that is still referenced.
 	const int32 NumOfAssetsDeleted = ObjectTools::DeleteAssets(UnusedAssetDataArray);
 	if (NumOfAssetsDeleted == 0) return;
 
-	SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功删除了%d个没使用过的文件"), NumOfAssetsDeleted));
+	if (SkippedReferencedAssets.IsEmpty())
+	{
+		SMDebug::ShowNotifyInfo(FString::Printf(TEXT("成功删除了%d个无引用资产"), NumOfAssetsDeleted));
+	}
+	else
+	{
+		SMDebug::ShowNotifyInfo(
+			FString::Printf(
+				TEXT("已删除%d个无引用资产，并跳过%d个有引用或无法确认的资产"),
+				NumOfAssetsDeleted,
+				SkippedReferencedAssets.Num()));
+	}
 }
 
-void UQuickAssetAction::FixUpRedirectors()
+bool UQuickAssetAction::FixUpRedirectors()
 {
-	IAssetRegistry& AssetRegistry =
-		FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry")).Get();
+	FAssetRegistryModule& AssetRegistryModule =
+		FModuleManager::LoadModuleChecked<FAssetRegistryModule>(TEXT("AssetRegistry"));
+	IAssetRegistry& AssetRegistry = AssetRegistryModule.Get();
+
+	// FixupReferencers can defer execution while asset discovery is running.
+	// Wait so the caller never continues with stale asset data.
+	AssetRegistry.WaitForCompletion();
 
 	FARFilter Filter;
 	Filter.bRecursivePaths = true;
 	Filter.PackagePaths.Emplace("/Game");
 	Filter.ClassPaths.Add(UObjectRedirector::StaticClass()->GetClassPathName());
 
-	TArray<FAssetData> AssetList;
-	AssetRegistry.GetAssets(Filter, AssetList);
-
-	if (AssetList.IsEmpty()) return;
-
-	TArray<FString> ObjectPaths;
-	for (const FAssetData& AssetData : AssetList)
+	TArray<FAssetData> RedirectorAssets;
+	AssetRegistry.GetAssets(Filter, RedirectorAssets);
+	if (RedirectorAssets.IsEmpty())
 	{
-		ObjectPaths.Add(AssetData.GetObjectPathString());
+		return true;
 	}
 
-	TArray<UObject*> Objects;
-
+	TArray<UObject*> LoadedObjects;
 	AssetViewUtils::FLoadAssetsSettings Settings;
 	Settings.bFollowRedirectors = false;
 	Settings.bAllowCancel = true;
 
-	AssetViewUtils::ELoadAssetsResult Result = AssetViewUtils::LoadAssetsIfNeeded(ObjectPaths, Objects, Settings);
-	if (Result != AssetViewUtils::ELoadAssetsResult::Cancelled)
+	const AssetViewUtils::ELoadAssetsResult Result =
+		AssetViewUtils::LoadAssetsIfNeeded(RedirectorAssets, LoadedObjects, Settings);
+	if (Result != AssetViewUtils::ELoadAssetsResult::Success)
 	{
-		TArray<UObjectRedirector*> Redirectors;
-		for (UObject* Object : Objects)
-		{
-			Redirectors.Add(CastChecked<UObjectRedirector>(Object));
-		}
-
-		FAssetToolsModule& AssetToolsModule = FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
-		AssetToolsModule.Get().FixupReferencers(Redirectors);
+		return false;
 	}
+
+	TArray<UObjectRedirector*> Redirectors;
+	for (UObject* Object : LoadedObjects)
+	{
+		if (UObjectRedirector* Redirector = Cast<UObjectRedirector>(Object))
+		{
+			Redirectors.Add(Redirector);
+		}
+	}
+
+	if (Redirectors.IsEmpty())
+	{
+		return true;
+	}
+
+	FAssetToolsModule& AssetToolsModule =
+		FModuleManager::LoadModuleChecked<FAssetToolsModule>(TEXT("AssetTools"));
+	IAssetTools& AssetTools = AssetToolsModule.Get();
+	if (AssetTools.IsFixupReferencersInProgress())
+	{
+		return false;
+	}
+
+	AssetTools.FixupReferencers(Redirectors);
+
+	// Remaining redirectors mean a reference could not be fixed, a package failed
+	// to save, or the user chose to keep them. All cases are unsafe for deletion.
+	TArray<FString> ScanPaths{TEXT("/Game")};
+	AssetRegistry.ScanPathsSynchronous(ScanPaths, true);
+
+	TArray<FAssetData> RemainingRedirectors;
+	AssetRegistry.GetAssets(Filter, RemainingRedirectors);
+	return RemainingRedirectors.IsEmpty();
 }

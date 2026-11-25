@@ -11,6 +11,9 @@
 #include "Sound/SoundCue.h"
 #include "Sound/SoundWave.h"
 #include "Engine/Texture.h"
+#include "Engine/Texture2D.h"
+#include "Engine/StaticMesh.h"
+#include "Engine/Blueprint.h"
 #include "Blueprint/UserWidget.h"
 #include "Components/SkeletalMeshComponent.h"
 #include "NiagaraSystem.h"
@@ -55,5 +58,5 @@ private:
 		{UNiagaraEmitter::StaticClass(), TEXT("NE_")}
 	};
 
-	void FixUpRedirectors();
+	bool FixUpRedirectors();
 };

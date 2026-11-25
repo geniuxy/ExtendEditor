@@ -6,7 +6,7 @@ public class ExtendEditor : ModuleRules
 {
 	public ExtendEditor(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
+		PCHUsage = PCHUsageMode.NoPCHs;
 
 		PublicDependencyModuleNames.AddRange(
 			new string[]

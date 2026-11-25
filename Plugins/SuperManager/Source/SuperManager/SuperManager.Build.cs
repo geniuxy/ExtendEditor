@@ -6,7 +6,7 @@ public class SuperManager : ModuleRules
 {
 	public SuperManager(ReadOnlyTargetRules Target) : base(Target)
 	{
-		PCHUsage = ModuleRules.PCHUsageMode.UseExplicitOrSharedPCHs;
+		PCHUsage = ModuleRules.PCHUsageMode.NoPCHs;
 		
 		PublicIncludePaths.AddRange(
 			new string[] {
