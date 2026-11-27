@@ -5,6 +5,9 @@
 #include "CoreMinimal.h"
 #include "Modules/ModuleManager.h"
 
+class FExtender;
+class FMenuBuilder;
+
 class FSuperManagerModule : public IModuleInterface
 {
 public:
@@ -14,5 +17,9 @@ public:
 	virtual void ShutdownModule() override;
 
 private:
-	void InitCBMenuExtention();
+	void InitCBMenuExtension();
+
+	TSharedRef<FExtender> CustomCBMenuExtender(const TArray<FString>& SelectedPaths);
+	void AddCBMenuEntry(FMenuBuilder& MenuBuilder);
+	void OnDeleteUnusedAssetButtonClicked();
 };
